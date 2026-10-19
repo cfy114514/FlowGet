@@ -60,6 +60,10 @@ class Origin(http.server.BaseHTTPRequestHandler):
             payload = b""
         if route == "/change" and self.changed:
             payload = bytes(b ^ 255 for b in PAYLOAD)
+        if route == "/alternate":
+            # ETags are scoped to a resource; two URLs may legitimately use
+            # the same tag for different bytes of the same size.
+            payload = bytes(b ^ 255 for b in PAYLOAD)
         etag = '"v2"' if route == "/change" and self.changed else '"v1"'
         ranged = self.headers.get("Range")
         start, end = 0, len(payload) - 1
@@ -256,6 +260,80 @@ class EngineChecks(unittest.TestCase):
         started = time.monotonic()
         self.wait(self.add("/limit", connections=4))
         self.assertGreater(time.monotonic() - started, 2.5)
+
+    def test_per_task_limit_is_shared_by_segments(self):
+        started = time.monotonic()
+        task_id = self.add("/range", connections=6, limit_kib=1024)
+        self.assert_file(self.wait(task_id))
+        self.assertGreater(time.monotonic() - started, 2.5)
+
+    def test_task_limit_does_not_block_other_tasks(self):
+        self.manager.configure(parallel=2, limit_kib=4096)
+        slow = self.add("/range", connections=2, limit_kib=32)
+        fast = self.add("/range", connections=2)
+        self.assert_file(self.wait(fast, timeout=8))
+        self.assertNotEqual(self.manager.tasks[slow].status, "complete")
+        self.manager.pause(slow)
+        self.wait(slow, "paused")
+
+    def test_queue_order_survives_restart(self):
+        self.manager.configure(queue_enabled=False, parallel=1)
+        a, b, c = [self.add("/range") for _ in range(3)]
+        self.manager.move([b, c], -1)
+        self.assertEqual(list(self.manager.tasks), [b, c, a])
+        self.manager.move([b, c], 1)
+        self.assertEqual(list(self.manager.tasks), [a, b, c])
+        self.manager.move([c], -1)
+        self.assertTrue(self.manager.shutdown())
+        self.manager = Manager(self.root / "state", use_proxy=False)
+        self.assertEqual(list(self.manager.tasks), [a, c, b])
+        self.manager.configure(queue_enabled=True)
+        self.assert_file(self.wait(a))
+        self.assert_file(self.wait(c))
+        self.assert_file(self.wait(b))
+        self.assertLessEqual(self.manager.tasks[c].completed, self.manager.tasks[b].completed)
+
+    def test_link_refresh_does_not_reuse_old_payload(self):
+        task_id, downloaded = self.pause_somewhere("/slow")
+        self.manager.update_task(task_id, url=self.base+"/alternate", name="updated.bin", connections=3, limit_kib=2048)
+        t = self.manager.tasks[task_id]
+        self.assertEqual((t.status, t.done, t.total, t.segments), ("paused", 0, None, []))
+        before = len(Origin.ranges)
+        self.manager.resume(task_id)
+        self.assert_file(self.wait(task_id), hashlib.sha256(bytes(b ^ 255 for b in PAYLOAD)).hexdigest())
+        self.assertEqual(t.name, "updated.bin")
+        self.assertEqual(t.limit_kib, 2048)
+        requests = sorted(start for route, start, end, tag in Origin.ranges[before:] if route == "/alternate" and tag == '"v1"')
+        self.assertEqual(requests, [0, 1024*1024, 2*1024*1024])
+        self.assertEqual(len(t.segments), 3)
+
+    def test_metadata_edit_preserves_resume_and_checks_active(self):
+        task_id, downloaded = self.pause_somewhere("/slow")
+        self.manager.update_task(task_id, url=self.base+"/slow", name="renamed.bin", connections=4)
+        self.assertEqual(self.manager.tasks[task_id].done, downloaded)
+        self.manager.resume(task_id)
+        t = self.wait(task_id, "downloading")
+        with self.assertRaises(ValueError):
+            self.manager.update_task(task_id, url=self.base+"/range", name="bad.bin", connections=4)
+        self.assert_file(self.wait(task_id))
+        with self.assertRaises(ValueError):
+            self.manager.update_task(task_id, url=self.base+"/range", name="bad.bin", connections=4)
+
+    def test_scheduled_stop_pauses_active_and_keeps_waiting(self):
+        self.manager.configure(parallel=1, stop_at=time.time()+1)
+        a, b = self.add("/slow", connections=1), self.add("/range")
+        t = self.wait(a, "paused")
+        self.assertGreater(t.done, 0)
+        self.assertFalse(self.manager.settings["queue_enabled"])
+        self.assertEqual(self.manager.settings["stop_at"], "")
+        self.assertEqual(self.manager.tasks[b].status, "queued")
+        self.assertTrue(self.manager.shutdown())
+        self.manager = Manager(self.root / "state", use_proxy=False)
+        self.assertFalse(self.manager.settings["queue_enabled"])
+        self.manager.set_queue(True)
+        self.manager.resume(a)
+        self.assert_file(self.wait(a))
+        self.assert_file(self.wait(b))
 
     def test_filename_url_safety(self):
         self.assertEqual(clean_name("CON.exe"), "_CON.exe")

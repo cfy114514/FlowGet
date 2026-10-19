@@ -105,6 +105,7 @@ class Task:
     resumable: bool = False
     segments: list = field(default_factory=list)
     automatic_name: bool = False
+    limit_kib: int = 0
 
 
 class Manager:
@@ -119,7 +120,7 @@ class Manager:
         self.last_save_error = ""
         self.settings = {"connections": 8, "parallel": 2, "limit_kib": 0,
             "folder": str(Path.home() / "Downloads" / "FlowGet"), "queue_enabled": True,
-            "schedule_at": ""}
+            "schedule_at": "", "stop_at": ""}
         self.use_proxy = use_proxy
         # Use only the trusted OS copy, never an executable from the CWD/PATH.
         system_curl = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "curl.exe"
@@ -128,6 +129,7 @@ class Manager:
             raise RuntimeError("系统 curl 不可用")
         self._limit_lock = threading.Lock()
         self._limit_next = time.monotonic()
+        self._task_limit_next = {}
         if self.state_file.exists():
             try:
                 state = json.loads(self.state_file.read_text(encoding="utf-8"))
@@ -161,11 +163,14 @@ class Manager:
             self.settings.update(values)
         self.save()
 
-    def add(self, url, folder=None, name="", connections=None, expected_sha256="", start=True, request_id=None):
+    def add(self, url, folder=None, name="", connections=None, expected_sha256="", start=True, request_id=None, limit_kib=0):
         url = check_url(url)
         expected_sha256 = expected_sha256.strip().lower()
         if expected_sha256 and not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
             raise ValueError("SHA-256 应为 64 位十六进制字符")
+        limit_kib = int(limit_kib)
+        if not 0 <= limit_kib <= 1048576:
+            raise ValueError("单任务限速应在 0–1048576 KB/s 之间")
         folder = str(Path(folder or self.settings["folder"]).resolve())
         automatic_name = not bool(name)
         name = clean_name(name or urllib.parse.unquote(urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]))
@@ -174,7 +179,7 @@ class Manager:
         task = Task(request_id or uuid.uuid4().hex, url, folder, name,
             max(1, min(32, int(connections or self.settings["connections"]))),
             status="queued" if start else "paused", expected_sha256=expected_sha256,
-            automatic_name=automatic_name)
+            automatic_name=automatic_name, limit_kib=limit_kib)
         with self.lock:
             if task.id in self.tasks:
                 return task.id
@@ -206,6 +211,56 @@ class Manager:
                 raise ValueError("请先暂停任务，等待所有连接停止后再移除")
             # Keep destination and partial payloads; never delete user files.
             self.tasks.pop(task_id, None)
+            self._task_limit_next.pop(task_id, None)
+        self.save()
+
+    def update_task(self, task_id, *, url, name, connections, limit_kib=0):
+        """Edit an idle task. A changed URL is re-probed with a fresh journal.
+
+        URL identity is part of the existing recovery contract; never splice old
+        payload into a replacement link without an independently proven identity.
+        """
+        url = check_url(url)
+        connections, limit_kib = int(connections), int(limit_kib)
+        if not 1 <= connections <= 32 or not 0 <= limit_kib <= 1048576:
+            raise ValueError("连接数应为 1–32，限速应为 0–1048576 KB/s")
+        with self.lock:
+            t = self.tasks[task_id]
+            if task_id in self.running or t.status in ACTIVE or t.status == "complete":
+                raise ValueError("仅可编辑已停止的未完成任务，请先暂停并等待连接停止")
+            if url != t.url:
+                t.done, t.total, t.segments, t.resumable = 0, None, [], False
+            t.url, t.name = url, clean_name(name or t.name)
+            t.connections, t.limit_kib = connections, limit_kib
+            t.automatic_name = False
+            t.status, t.error = "paused", ""
+            self._task_limit_next.pop(task_id, None)
+        self.save()
+
+    def move(self, task_ids, direction):
+        """Move the selected block one position, preserving relative order."""
+        if direction not in (-1, 1):
+            raise ValueError("队列方向无效")
+        selected = set(task_ids)
+        with self.lock:
+            order = list(self.tasks)
+            indices = range(1, len(order)) if direction == -1 else range(len(order)-2, -1, -1)
+            for i in indices:
+                j = i + direction
+                if order[i] in selected and order[j] not in selected:
+                    order[i], order[j] = order[j], order[i]
+            self.tasks = {key: self.tasks[key] for key in order}
+        self.save()
+
+    def set_queue(self, enabled, *, clear_schedule=True):
+        with self.lock:
+            self.settings["queue_enabled"] = bool(enabled)
+            if clear_schedule:
+                self.settings["schedule_at"] = ""
+            if not enabled:
+                for task_id, (_, stop) in self.running.items():
+                    stop.set()
+                    self.tasks[task_id].status = "pausing"
         self.save()
 
     def _dispatch(self):
@@ -217,6 +272,14 @@ class Manager:
                     if scheduled and time.time() >= float(scheduled):
                         self.settings["schedule_at"] = ""
                         self.settings["queue_enabled"] = True
+                    stop_at = self.settings.get("stop_at", "")
+                    if stop_at and time.time() >= float(stop_at):
+                        self.settings["stop_at"] = ""
+                        self.settings["schedule_at"] = ""
+                        self.settings["queue_enabled"] = False
+                        for task_id, (_, stop) in self.running.items():
+                            stop.set()
+                            self.tasks[task_id].status = "pausing"
                     slots = max(1, min(8, int(self.settings["parallel"]))) - len(self.running)
                     if self.settings["queue_enabled"]:
                         for t in self.tasks.values():
@@ -256,7 +319,7 @@ class Manager:
         return urllib.request.build_opener(Redirects(), *([] if self.use_proxy else [urllib.request.ProxyHandler({})]))
 
     def _open(self, url, headers=None):
-        all_headers = {"User-Agent": "FlowGet/0.1", "Accept-Encoding": "identity", **(headers or {})}
+        all_headers = {"User-Agent": "FlowGet/0.2", "Accept-Encoding": "identity", **(headers or {})}
         if self.curl:
             return CurlResponse(self.curl, url, all_headers, self.use_proxy)
         request = urllib.request.Request(url, headers=all_headers)
@@ -345,16 +408,28 @@ class Manager:
             t.resumable = bool(info["range"] and info["validator"])
         return directory, ranges
 
-    def _throttle(self, n, stop):
-        limit = int(self.settings.get("limit_kib", 0)) * 1024
-        if limit <= 0:
-            return
-        with self._limit_lock:
-            now = time.monotonic()
-            wait = max(0, self._limit_next - now)
-            self._limit_next = max(now, self._limit_next) + n / limit
-        if stop.wait(wait):
-            raise Paused()
+    def _throttle(self, n, stop, task=None):
+        while True:
+            with self._limit_lock:
+                now = time.monotonic()
+                limit = int(self.settings.get("limit_kib", 0)) * 1024
+                task_limit = task.limit_kib * 1024 if task else 0
+                # Only consume the global budget when this task can send now;
+                # a slow task must not reserve future slots ahead of other tasks.
+                ready = now
+                if limit > 0:
+                    ready = max(ready, self._limit_next)
+                if task_limit > 0:
+                    ready = max(ready, self._task_limit_next.get(task.id, now))
+                wait = ready - now
+                if wait <= 0:
+                    if limit > 0:
+                        self._limit_next = now + n / limit
+                    if task_limit > 0:
+                        self._task_limit_next[task.id] = now + n / task_limit
+                    return
+            if stop.wait(min(wait, 0.1)):
+                raise Paused()
 
     def _segment(self, t, stop, info, directory, index, bounds):
         lo, hi = bounds
@@ -405,7 +480,7 @@ class Manager:
                                 break
                             if remaining is not None and len(block) > remaining:
                                 raise ProtocolError("服务器发送了范围外的数据")
-                            self._throttle(len(block), stop)
+                            self._throttle(len(block), stop, t)
                             f.write(block)
                             with self.lock:
                                 t.done += len(block)
@@ -517,6 +592,8 @@ class Manager:
             with self.lock:
                 t.speed = 0
                 self.running.pop(t.id, None)
+                with self._limit_lock:
+                    self._task_limit_next.pop(t.id, None)
             try:
                 self.save()
             except OSError as exc:
