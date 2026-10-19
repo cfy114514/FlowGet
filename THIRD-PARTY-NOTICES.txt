@@ -1,0 +1,12 @@
+FlowGet packages the Python 3.13 runtime and Tcl/Tk 8.6 using PyInstaller 6.16.0.
+Their notices are included under licenses/.
+
+Python and included standard-library components: licenses/Python.txt
+Tcl/Tk: licenses/Tcl-Tk.txt
+PyInstaller bootloader and distribution exception: licenses/PyInstaller.txt
+
+Windows curl is an existing operating-system component and is not bundled here.
+Build-time tools are not copied as application source.
+
+No Internet Download Manager / Tonec program code, icons, images or resource
+payloads are included. FlowGet is independently implemented and unaffiliated.

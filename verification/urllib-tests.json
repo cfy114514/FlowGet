@@ -1,0 +1,9 @@
+{
+  "tests": 17,
+  "failures": 0,
+  "errors": 0,
+  "success": true,
+  "server": "127.0.0.1 controlled HTTP origin",
+  "payload_sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0",
+  "backend": "Python urllib"
+}

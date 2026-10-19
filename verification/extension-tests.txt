@@ -1,0 +1,12 @@
+✔ context menu hands off only an explicit HTTP link (2.6323ms)
+✔ non HTTP and embedded credentials never reach native messaging (6.7731ms)
+✔ foreign extension messages do not trigger a download (0.832ms)
+✔ popup reports native rejection (0.8785ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 122.7861

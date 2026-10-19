@@ -1,0 +1,56 @@
+[
+  {
+    "name": "pyinstaller-6.16.0-py3-none-win_amd64.whl",
+    "status": "complete",
+    "bytes": 1374706,
+    "sha256": "bc10eb1a787f99fea613509f55b902fbd2d8b73ff5f51ff245ea29a481d97d41",
+    "expected_sha256": "bc10eb1a787f99fea613509f55b902fbd2d8b73ff5f51ff245ea29a481d97d41",
+    "segments": 3,
+    "error": ""
+  },
+  {
+    "name": "pyinstaller_hooks_contrib-2025.8-py3-none-any.whl",
+    "status": "complete",
+    "bytes": 442346,
+    "sha256": "8d0b8cfa0cb689a619294ae200497374234bd4e3994b3ace2a4442274c899064",
+    "expected_sha256": "8d0b8cfa0cb689a619294ae200497374234bd4e3994b3ace2a4442274c899064",
+    "segments": 1,
+    "error": ""
+  },
+  {
+    "name": "packaging-25.0-py3-none-any.whl",
+    "status": "complete",
+    "bytes": 66469,
+    "sha256": "29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484",
+    "expected_sha256": "29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484",
+    "segments": 1,
+    "error": ""
+  },
+  {
+    "name": "pefile-2023.2.7-py3-none-any.whl",
+    "status": "complete",
+    "bytes": 71791,
+    "sha256": "da185cd2af68c08a6cd4481f7325ed600a88f6a813bad9dea07ab3ef73d8d8d6",
+    "expected_sha256": "da185cd2af68c08a6cd4481f7325ed600a88f6a813bad9dea07ab3ef73d8d8d6",
+    "segments": 1,
+    "error": ""
+  },
+  {
+    "name": "altgraph-0.17.4-py2.py3-none-any.whl",
+    "status": "complete",
+    "bytes": 21212,
+    "sha256": "642743b4750de17e655e6711601b077bc6598dbfa3ba5fa2b2a35ce12b508dff",
+    "expected_sha256": "642743b4750de17e655e6711601b077bc6598dbfa3ba5fa2b2a35ce12b508dff",
+    "segments": 1,
+    "error": ""
+  },
+  {
+    "name": "pywin32_ctypes-0.2.3-py3-none-any.whl",
+    "status": "complete",
+    "bytes": 30756,
+    "sha256": "8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8",
+    "expected_sha256": "8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8",
+    "segments": 1,
+    "error": ""
+  }
+]

@@ -1,0 +1,30 @@
+test_bad_frames (test_bridge.BridgeChecks.test_bad_frames) ... ok
+test_caller_fields_cannot_set_destination (test_bridge.BridgeChecks.test_caller_fields_cannot_set_destination) ... ok
+test_import_once_and_replay_deduplication (test_bridge.BridgeChecks.test_import_once_and_replay_deduplication) ... ok
+test_invalid_inbox_is_quarantined (test_bridge.BridgeChecks.test_invalid_inbox_is_quarantined) ... ok
+test_non_http_and_embedded_credentials_denied (test_bridge.BridgeChecks.test_non_http_and_embedded_credentials_denied) ... ok
+test_unicode_byte_framing (test_bridge.BridgeChecks.test_unicode_byte_framing) ... ok
+test_unknown_extension_denied (test_bridge.BridgeChecks.test_unknown_extension_denied) ... ok
+test_bad_digest_never_published (test_engine.EngineChecks.test_bad_digest_never_published) ... ok
+test_bad_range_never_published (test_engine.EngineChecks.test_bad_range_never_published) ... ok
+test_changed_representation_discards_old_parts (test_engine.EngineChecks.test_changed_representation_discards_old_parts) ... ok
+test_collision_preserves_existing (test_engine.EngineChecks.test_collision_preserves_existing) ... ok
+test_disconnect_retry (test_engine.EngineChecks.test_disconnect_retry) ... ok
+test_empty (test_engine.EngineChecks.test_empty) ... ok
+test_filename_url_safety (test_engine.EngineChecks.test_filename_url_safety) ... ok
+test_ignore_ranges (test_engine.EngineChecks.test_ignore_ranges) ... ok
+test_missing (test_engine.EngineChecks.test_missing) ... ok
+test_no_validator (test_engine.EngineChecks.test_no_validator) ... ok
+test_parallel_hash (test_engine.EngineChecks.test_parallel_hash) ... ok
+test_pause_resume_across_manager_restart (test_engine.EngineChecks.test_pause_resume_across_manager_restart) ... ok
+test_queue_parallel_cap (test_engine.EngineChecks.test_queue_parallel_cap) ... ok
+test_redirect (test_engine.EngineChecks.test_redirect) ... ok
+test_scheduled_queue (test_engine.EngineChecks.test_scheduled_queue) ... ok
+test_server_filename_and_explicit_name (test_engine.EngineChecks.test_server_filename_and_explicit_name) ... ok
+test_speed_limit (test_engine.EngineChecks.test_speed_limit) ... ok
+test_unknown_length (test_engine.EngineChecks.test_unknown_length) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 22.758s
+
+OK

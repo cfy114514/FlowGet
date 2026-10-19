@@ -1,0 +1,8 @@
+{
+  "method": "Windows UI: create dialog, enter URL, submit, observe complete; independent on-disk SHA256",
+  "bytes": 8388608,
+  "status": "complete",
+  "segments": 8,
+  "sha256": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f",
+  "expected_sha256": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f"
+}

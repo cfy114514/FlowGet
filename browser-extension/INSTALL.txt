@@ -1,0 +1,36 @@
+FlowGet Link Bridge — 已开发，尚未安装或做真实浏览器联调
+
+能力
+  右键网页链接，选择「用 FlowGet 下载此链接」。
+  或点击扩展工具栏按钮，手动粘贴直链并发送。
+  仅在你主动操作时发送该链接，不读取网页正文、Cookie 或浏览历史。
+  本版本不拦截浏览器默认下载，不显示视频下载浮层。
+
+安装（需要用户在浏览器中主动加载扩展）
+  1. 将整个 FlowGet 目录放到准备长期使用的位置。
+  2. Edge 打开 edge://extensions；Chrome 打开 chrome://extensions。
+  3. 打开开发者模式，加载解压缩的扩展，选择本 browser-extension 目录。
+  4. 复制扩展详情中的 32 位扩展 ID。
+  5. 在 FlowGet 目录执行下面对应命令，将 EXTENSION_ID 换成实际 ID：
+       .\register-browser.ps1 -ExtensionId EXTENSION_ID -Browser Edge
+     Chrome 则将 Edge 换成 Chrome。两个浏览器的扩展 ID 可能不同，应分别注册。
+  6. 右键一个 HTTP/HTTPS 文件链接，发送到 FlowGet。
+
+注册脚本的具体作用
+  创建 %LOCALAPPDATA%\FlowGet\bridge.json 和 Native Messaging 清单。
+  只注册当前用户 HKCU 中 com.flowget.bridge 的 Edge/Chrome 项。
+  allowed_origins 仅包含你提供的扩展 ID。
+  不修改浏览器下载设置，不安装驱动、服务或开机启动项。
+
+通信方式
+  浏览器启动 FlowGetBridge.exe，以 Native Messaging 长度前缀 JSON 通信。
+  桥接验证浏览器扩展来源及消息长度，只接收 HTTP/HTTPS URL。
+  将任务写入当前用户 FlowGet 收件箱，桌面程序原子导入并去重。
+  没有开放 localhost HTTP 控制端口。
+  如果桌面程序尚未运行，桥接会启动同目录的 FlowGet.exe。
+  不支持保存密码、登录型请求上下文或绕过网站认证。
+
+卸载
+  执行 .\unregister-browser.ps1 删除 FlowGet 自己的浏览器宿主注册。
+  然后在浏览器扩展设置中移除 FlowGet Link Bridge。
+  下载文件与任务记录均保留。

@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "FlowGet Link Bridge",
+  "description": "通过右键菜单将你选择的下载链接发送给本机 FlowGet。",
+  "version": "0.1.0",
+  "permissions": ["contextMenus", "nativeMessaging"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_popup": "popup.html", "default_title": "发送下载链接到 FlowGet"}
+}

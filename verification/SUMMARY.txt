@@ -1,0 +1,30 @@
+FlowGet 0.1.0 交付验证，2026-10-19
+
+已通过
+  25 项 Python 测试：18 项 HTTP 引擎边界检查、7 项桥接消息与导入检查。
+  4 项扩展后台逻辑测试（模拟 Chrome API；不代表真实浏览器联调）。
+  Python urllib 后端早期 17 项核心测试全部通过；最终新增功能主测 Windows curl。
+  6 个真实 PyPI HTTPS 文件通过独立引擎下载，与官方发布的 SHA-256 全部一致。
+  GUI 可执行文件：通过 Windows 实际界面新建任务，8 MB 文件完整落盘，
+    与原始测试数据的 SHA-256 一致。
+  最终打包桥接可执行文件：模拟合法/非法调用者，以二进制 stdin/stdout 帧
+    交互；非法来源被拒绝，合法任务启动桌面程序、完成导入和 8 MB 下载。
+  最终打包 GUI 再经桥接下载官方 PyPI HTTPS wheel，3 个分段，独立核对哈希一致。
+  注册、卸载、构建脚本的 PowerShell 语法检查通过；没有执行宿主注册。
+
+实际使用前仍需验证
+  Edge/Chrome 扩展尚未加载；没有更改浏览器扩展或注册 Native Messaging 宿主。
+  因此不将真实浏览器集成标为完成。
+  尚未验证任意登录型站点、所有下载源、超大文件、FAT/exFAT、IPv6 专用网络。
+  没有基准测试证明速度达到或超过 IDM。
+
+复现与记录
+  python-tests.txt、extension-tests.txt：最终测试记录。
+  internet-results.json：6 个真实 HTTPS 文件的公布/实得哈希。
+  exe-ui-test.json：实际 GUI 的第一轮下载验收。
+  packaged-bridge.json：最终打包桥接及桌面流程验收、可执行文件 SHA-256。
+  packaged-https.json：最终打包 GUI 的真实 HTTPS 下载验收。
+
+实现来源
+  参见 SPECIFICATION.txt 中 REA 证据与界面观察范围。
+  未反编译 IDM 算法，未复制其代码或资源；这是行为规格驱动的独立实现。

@@ -1,0 +1,9 @@
+{
+  "method": "Final packaged GUI: official PyPI HTTPS wheel via packaged bridge and independent disk hash comparison",
+  "status": "complete",
+  "filename": "pyinstaller-6.16.0-py3-none-win_amd64.whl",
+  "bytes": 1374706,
+  "sha256": "bc10eb1a787f99fea613509f55b902fbd2d8b73ff5f51ff245ea29a481d97d41",
+  "published_sha256": "bc10eb1a787f99fea613509f55b902fbd2d8b73ff5f51ff245ea29a481d97d41",
+  "segments": 3
+}
