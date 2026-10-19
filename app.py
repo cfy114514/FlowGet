@@ -12,9 +12,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from engine import Manager, ACTIVE
+from ui_base import Dialog, BG, PANEL, INK, MUTED, ACCENT
+from feature_dialogs import QueueDialog, CrawlDialog, FTPLoginDialog
 
-VERSION = "0.2.0"
-BG, PANEL, INK, MUTED, ACCENT = "#11151d", "#1b2230", "#e5ebf6", "#93a2b9", "#58d5bc"
+VERSION = "0.3.0"
 STATUS = {"queued": "等待队列", "probing": "连接中", "downloading": "下载中", "pausing": "正在暂停",
           "paused": "已暂停", "verifying": "合并 / 校验", "complete": "已完成", "error": "失败"}
 
@@ -44,64 +45,49 @@ def open_directory(path):
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target])
 
 
-class Dialog(tk.Toplevel):
-    def __init__(self, app, title, width=620):
-        super().__init__(app.root)
-        self.app = app
-        self.title(title)
-        self.configure(bg=PANEL)
-        self.resizable(False, False)
-        self.transient(app.root)
-        self.body = ttk.Frame(self, padding=25, style="Panel.TFrame")
-        self.body.pack(fill="both", expand=True)
-        self.body.columnconfigure(0, weight=1)
-        self.geometry(f"{width}x400+{app.root.winfo_x()+150}+{app.root.winfo_y()+90}")
-        self.grab_set()
-        self.after_idle(self.focus_set)
-        self.bind("<Escape>", lambda e: self.destroy())
-
-    def label(self, text, row):
-        ttk.Label(self.body, text=text, style="Muted.TLabel").grid(row=row, column=0, sticky="w", pady=(10, 5))
-
-    def destroy(self):
-        if getattr(self, "update_timer", None):
-            self.after_cancel(self.update_timer)
-        super().destroy()
-
-
 class AddDialog(Dialog):
     def __init__(self, app, initial=""):
-        super().__init__(app, "新建下载 · FlowGet", 650)
-        self.geometry(f"650x630+{app.root.winfo_x()+110}+{app.root.winfo_y()+40}")
-        self.label("下载地址 · HTTP / HTTPS", 0)
+        super().__init__(app, "新建下载 · FlowGet", 680)
+        self.geometry(f"680x600+{app.root.winfo_x()+80}+{app.root.winfo_y()+30}")
+        tabs = ttk.Notebook(self.body)
+        tabs.pack(fill="both", expand=True)
+        general, advanced = ttk.Frame(tabs, padding=16), ttk.Frame(tabs, padding=16)
+        tabs.add(general, text="  下载信息  ")
+        tabs.add(advanced, text="  连接 / FTP / 校验  ")
+        general.columnconfigure(0, weight=1)
+        advanced.columnconfigure(0, weight=1)
+        def field(parent, title, row, variable, **options):
+            ttk.Label(parent, text=title, style="Muted.TLabel").grid(row=row, column=0, sticky="w", pady=(12, 5))
+            entry = ttk.Entry(parent, textvariable=variable, **options)
+            entry.grid(row=row+1, column=0, sticky="ew")
+            return entry
         self.url = tk.StringVar(value=initial)
-        url_entry = ttk.Entry(self.body, textvariable=self.url, width=72)
-        url_entry.grid(row=1, column=0, sticky="ew")
-        self.after_idle(url_entry.focus_set)
-        self.label("文件名 · 留空则采用网址中的名称", 2)
+        entry = field(general, "下载地址 · HTTP / HTTPS / FTP", 0, self.url, width=65)
+        self.entry_focus_timer = self.after_idle(entry.focus_set)
         self.name = tk.StringVar()
-        ttk.Entry(self.body, textvariable=self.name).grid(row=3, column=0, sticky="ew")
-        self.label("保存目录", 4)
-        folder_row = ttk.Frame(self.body, style="Panel.TFrame")
-        folder_row.grid(row=5, column=0, sticky="ew")
-        folder_row.columnconfigure(0, weight=1)
+        field(general, "文件名 · 留空自动获取", 2, self.name)
         self.folder = tk.StringVar(value=app.manager.settings["folder"])
-        ttk.Entry(folder_row, textvariable=self.folder).grid(row=0, column=0, sticky="ew")
-        ttk.Button(folder_row, text="浏览…", command=self.browse).grid(row=0, column=1, padx=(8, 0))
-        self.label("最大连接数（1–32）", 6)
+        field(general, "保存目录", 4, self.folder)
+        ttk.Button(general, text="浏览目录…", command=self.browse, style="Compact.TButton").grid(row=6, column=0, sticky="e", pady=8)
+        self.queue_choices = {q["name"]: q["id"] for q in app.manager.queue_snapshots()}
+        self.queue_name = tk.StringVar(value=next((name for name, key in self.queue_choices.items() if key == app.active_queue), next(iter(self.queue_choices))))
+        ttk.Label(general, text="下载队列", style="Muted.TLabel").grid(row=7, column=0, sticky="w", pady=(10, 5))
+        ttk.Combobox(general, values=list(self.queue_choices), textvariable=self.queue_name, state="readonly").grid(row=8, column=0, sticky="ew")
         self.connections = tk.IntVar(value=app.manager.settings["connections"])
-        ttk.Spinbox(self.body, from_=1, to=32, textvariable=self.connections, width=8).grid(row=7, column=0, sticky="w")
-        self.label("预期 SHA-256 · 可选，填写后必须匹配才保存成品", 8)
-        self.digest = tk.StringVar()
-        ttk.Entry(self.body, textvariable=self.digest).grid(row=9, column=0, sticky="ew")
-        self.label("单任务速度上限 · KB/s，0 表示不限速", 10)
         self.limit = tk.IntVar(value=0)
-        ttk.Spinbox(self.body, from_=0, to=1048576, textvariable=self.limit, width=16).grid(row=11, column=0, sticky="w")
+        self.digest = tk.StringVar()
+        self.ftp_user = tk.StringVar(value="anonymous")
+        self.ftp_password = tk.StringVar()
+        field(advanced, "最大连接数 · 1–32；FTP 使用单连接", 0, self.connections)
+        field(advanced, "单任务速度上限 · KB/s，0 表示不限速", 2, self.limit)
+        field(advanced, "预期 SHA-256 · 可选", 4, self.digest)
+        field(advanced, "FTP 用户名 · 默认匿名登录", 6, self.ftp_user)
+        field(advanced, "FTP 密码 · 仅本次运行保留", 8, self.ftp_password, show="●")
+        ttk.Label(advanced, text="FTP 使用明文传输。HTTP / HTTPS 不使用这些 FTP 登录信息。", style="Muted.TLabel").grid(row=10, column=0, sticky="w", pady=14)
         footer = ttk.Frame(self.body, style="Panel.TFrame")
-        footer.grid(row=12, column=0, sticky="e", pady=(24, 0))
-        ttk.Button(footer, text="稍后下载", command=lambda: self.submit(False)).pack(side="left", padx=8)
-        ttk.Button(footer, text="加入下载队列", style="Accent.TButton", command=lambda: self.submit(True)).pack(side="left")
-        self.bind("<Escape>", lambda e: self.destroy())
+        footer.pack(fill="x", pady=(16, 0))
+        ttk.Button(footer, text="加入下载队列", style="Accent.TButton", command=lambda: self.submit(True)).pack(side="right")
+        ttk.Button(footer, text="稍后下载", command=lambda: self.submit(False)).pack(side="right", padx=8)
 
     def browse(self):
         value = filedialog.askdirectory(parent=self, initialdir=self.folder.get())
@@ -116,7 +102,10 @@ class AddDialog(Dialog):
             if not 1 <= c <= 32:
                 raise ValueError("连接数需介于 1 和 32 之间")
             task_id = self.app.manager.add(self.url.get(), self.folder.get(), self.name.get(), c,
-                self.digest.get(), start=start, limit_kib=self.limit.get())
+                self.digest.get(), start=start, limit_kib=self.limit.get(),
+                queue_id=self.queue_choices[self.queue_name.get()], ftp_user=self.ftp_user.get(), ftp_password=self.ftp_password.get())
+            self.ftp_password.set("")
+            self.app.active_queue = self.queue_choices[self.queue_name.get()]
             self.app.query.set("")
             self.app.select_filter("全部任务")
             self.app.table.selection_set(task_id)
@@ -205,6 +194,7 @@ class App:
     def __init__(self, root, manager):
         self.root, self.manager = root, manager
         self.filter = "全部任务"
+        self.active_queue = None
         self.history = [0] * 80
         self.rows = {}
         self.sort_key, self.sort_reverse = None, False
@@ -232,6 +222,16 @@ class App:
         style.configure("TEntry", fieldbackground="#252e3e", foreground=INK, insertcolor=INK, padding=9)
         style.configure("TEntry", bordercolor="#354055", lightcolor="#354055", darkcolor="#354055")
         style.configure("TSpinbox", fieldbackground="#252e3e", foreground=INK, padding=7, arrowsize=16)
+        style.configure("TSpinbox", background="#293448", bordercolor="#354055", lightcolor="#354055", darkcolor="#354055", arrowcolor=MUTED)
+        style.configure("TCombobox", fieldbackground="#252e3e", background="#293448", foreground=INK,
+            arrowcolor=MUTED, bordercolor="#354055", lightcolor="#354055", darkcolor="#354055", padding=5)
+        style.map("TCombobox", fieldbackground=[("readonly", "#252e3e")], foreground=[("readonly", INK)],
+            selectbackground=[("readonly", "#252e3e")], selectforeground=[("readonly", INK)])
+        style.configure("TCheckbutton", background=PANEL, foreground=INK)
+        style.map("TCheckbutton", background=[("active", PANEL)])
+        style.configure("TNotebook", background=PANEL, borderwidth=0)
+        style.configure("TNotebook.Tab", background="#252e3e", foreground=MUTED, padding=(12, 8))
+        style.map("TNotebook.Tab", background=[("selected", "#294b54")], foreground=[("selected", INK)])
         style.configure("TButton", background="#293448", foreground=INK, padding=(15, 9))
         style.map("TButton", background=[("active", "#35455e")])
         style.map("TButton", foreground=[("disabled", "#617086")])
@@ -244,6 +244,9 @@ class App:
         style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor="#2a3445", borderwidth=0,
             lightcolor=ACCENT, darkcolor=ACCENT, bordercolor="#2a3445", thickness=5)
         style.configure("Vertical.TScrollbar", background="#354055", troughcolor=PANEL, arrowsize=12)
+        for orientation in ("Horizontal", "Vertical"):
+            style.configure(orientation + ".TScrollbar", background="#354055", troughcolor=PANEL,
+                bordercolor=PANEL, lightcolor="#354055", darkcolor="#354055", arrowcolor=MUTED)
         style.configure("Compact.TButton", padding=(10, 5), font=("Microsoft YaHei UI", 9))
 
     def build(self):
@@ -255,6 +258,8 @@ class App:
         tasks_menu.add_separator()
         tasks_menu.add_command(label="开始 / 停止队列", command=self.queue)
         tasks_menu.add_command(label="下载设置…", command=lambda: Settings(self))
+        tasks_menu.add_command(label="管理多队列…", command=lambda: QueueDialog(self))
+        tasks_menu.add_command(label="站点抓取…", command=lambda: CrawlDialog(self))
         menubar.add_cascade(label="任务", menu=tasks_menu)
         self.root.configure(menu=menubar)
         side = tk.Frame(self.root, bg="#151b25", width=190)
@@ -287,8 +292,18 @@ class App:
         tk.Label(heading, text="搜索文件或地址  ", bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(side="right")
         self.search.insert(0, "")
         self.query.trace_add("write", lambda *_: self.render_table())
-        tk.Label(main, text="多连接传输   /   安全续传   /   本地任务记录", bg=BG, fg=MUTED,
-                 font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(4, 20))
+        scope = tk.Frame(main, bg=BG)
+        scope.pack(fill="x", pady=(8, 16))
+        tk.Label(scope, text="下载队列", bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(0, 8))
+        self.queue_view = tk.StringVar(value="全部队列")
+        self.queue_selector = ttk.Combobox(scope, textvariable=self.queue_view, state="readonly", width=18)
+        self.queue_selector.pack(side="left")
+        self.queue_selector.bind("<<ComboboxSelected>>", self.choose_queue)
+        ttk.Button(scope, text="管理队列", command=lambda: QueueDialog(self), style="Compact.TButton").pack(side="left", padx=8)
+        ttk.Button(scope, text="站点抓取", command=lambda: CrawlDialog(self), style="Compact.TButton").pack(side="left")
+        self.master_button = ttk.Button(scope, text="全部停止", command=self.master_queue, style="Compact.TButton")
+        self.master_button.pack(side="right", padx=(10, 0))
+        tk.Label(scope, text="HTTP · HTTPS · FTP", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(side="right")
         cards = tk.Frame(main, bg=BG)
         cards.pack(fill="x", pady=(0, 18))
         self.metrics = []
@@ -324,10 +339,10 @@ class App:
             self.actions[title] = button
         table_box = tk.Frame(main, bg=PANEL)
         table_box.pack(fill="both", expand=True)
-        columns = ("order", "name", "size", "progress", "state", "speed", "eta")
-        self.table = ttk.Treeview(table_box, columns=columns, show="headings", selectmode="extended", height=6)
-        self.column_titles = dict(zip(columns, ("顺序", "文件名", "大小", "进度", "状态", "速度", "剩余时间")))
-        for c, width, stretch in zip(columns, (55, 270, 90, 85, 110, 95, 95), (False, True, False, False, False, False, False)):
+        columns = ("order", "name", "queue", "size", "progress", "state", "speed", "eta")
+        self.table = ttk.Treeview(table_box, columns=columns, show="headings", selectmode="extended", height=4)
+        self.column_titles = dict(zip(columns, ("顺序", "文件名", "队列", "大小", "进度", "状态", "速度", "剩余时间")))
+        for c, width, stretch in zip(columns, (55, 250, 110, 85, 75, 100, 90, 85), (False, True, False, False, False, False, False, False)):
             self.table.heading(c, text=self.column_titles[c], command=lambda key=c: self.sort_by(key))
             self.table.column(c, width=width, minwidth=55 if c == "order" else 75, stretch=stretch, anchor="w" if c == "name" else "center")
         table_box.rowconfigure(0, weight=1)
@@ -377,8 +392,21 @@ class App:
         self.heading.configure(text=value)
         self.render_table()
 
+    def sync_queues(self):
+        self.queue_names = {q["id"]: q["name"] for q in self.manager.queue_snapshots()}
+        if self.active_queue not in self.queue_names:
+            self.active_queue = None
+        self.queue_selector.configure(values=["全部队列", *self.queue_names.values()])
+        self.queue_view.set(self.queue_names.get(self.active_queue, "全部队列"))
+
+    def choose_queue(self, event=None):
+        self.active_queue = next((key for key, name in self.queue_names.items() if name == self.queue_view.get()), None)
+        self.refresh_selection()
+
     def accept(self, t, group=None, search=True):
         group = group or self.filter
+        if self.active_queue is not None and t["queue_id"] != self.active_queue:
+            return False
         if search and self.query.get().lower() not in (t["name"] + " " + t["url"]).lower():
             return False
         if group == "全部任务":
@@ -395,6 +423,7 @@ class App:
             "压缩文件": {".zip", ".7z", ".rar", ".gz", ".tar"}}.get(group, set())
 
     def render_table(self):
+        self.sync_queues()
         self.rows = {t["id"]: t for t in self.manager.snapshots()}
         positions = {key: i+1 for i, key in enumerate(self.rows)}
         wanted = [t for t in self.rows.values() if self.accept(t)]
@@ -402,6 +431,7 @@ class App:
             key = self.sort_key
             def sort_value(t):
                 return {"name": t["name"].casefold(), "size": t["total"] if t["total"] is not None else -1,
+                    "queue": self.queue_names[t["queue_id"]].casefold(),
                     "progress": t["done"] / t["total"] if t["total"] else int(t["status"] == "complete"),
                     "state": STATUS.get(t["status"], t["status"]), "speed": t["speed"],
                     "eta": max(0, t["total"] - t["done"]) / t["speed"] if t["total"] is not None and t["speed"] else float("inf")}[key]
@@ -414,7 +444,7 @@ class App:
             fraction = t["done"] / t["total"] if t["total"] else (1 if t["status"] == "complete" else 0)
             speed = t["speed"]
             remaining = max(0, t["total"] - t["done"]) / speed if t["total"] is not None and speed > 0 else None
-            values = (positions[t["id"]], t["name"], size(t["total"]), f"{fraction:.1%}" if t["total"] is not None else "—", STATUS.get(t["status"], t["status"]),
+            values = (positions[t["id"]], t["name"], self.queue_names[t["queue_id"]], size(t["total"]), f"{fraction:.1%}" if t["total"] is not None else "—", STATUS.get(t["status"], t["status"]),
                       size(speed) + "/s" if speed else "—", eta(remaining))
             tags = (t["status"], "stripe" if index % 2 else "plain")
             if self.table.exists(t["id"]):
@@ -444,7 +474,7 @@ class App:
         self.details()
 
     def move(self, direction):
-        self.manager.move([t["id"] for t in self.selected()], direction)
+        self.manager.move([t["id"] for t in self.selected()], direction, queue_id=self.active_queue)
         self.sort_by("order")
         self.details()
 
@@ -480,7 +510,7 @@ class App:
         self.progress["value"] = fraction * 100
         text = t["error"] or ("SHA-256  " + t["sha256"] if t["sha256"] else
             f"{size(t['done'])} / {size(t['total'])}   ·   {len(t['segments'])} 个分段   ·   " +
-            ("支持校验续传" if t["resumable"] else "缺少强文件标识时使用单连接，重新开始可安全重下"))
+            (("FTP 按大小与修改时间续传" if t["url"].startswith("ftp:") else "支持校验续传") if t["resumable"] else "不支持续传时会从头下载"))
         limit = f"单任务上限 {t.get('limit_kib', 0):,} KB/s" if t.get("limit_kib") else "单任务不限速"
         self.detail_text.configure(text=text + "\n" + limit, fg="#ff969d" if t["error"] else MUTED)
         count = len(t["segments"])
@@ -501,10 +531,13 @@ class App:
         self.draw_graph()
         self.metrics[1].configure(text=f"{sum(t['status'] in ACTIVE for t in tasks):02}")
         self.metrics[2].configure(text=f"{sum(t['status'] == 'complete' for t in tasks):02}")
-        scheduled = self.manager.settings.get("schedule_at")
-        queue_text = "定时 " + datetime.fromtimestamp(float(scheduled)).strftime("%m-%d %H:%M") if scheduled else ("队列开启" if self.manager.settings["queue_enabled"] else "队列停止")
-        self.queue_label.configure(text=queue_text, fg=ACCENT if self.manager.settings["queue_enabled"] else MUTED)
-        self.actions["队列"].configure(text="停止队列" if self.manager.settings["queue_enabled"] else "启动队列")
+        scope = self.manager.queues[self.active_queue] if self.active_queue else self.manager.settings
+        enabled = scope["enabled" if self.active_queue else "queue_enabled"]
+        scheduled = scope.get("schedule_at")
+        queue_text = "等待定时启动" if scheduled else "全局已停止" if not self.manager.settings["queue_enabled"] else "队列开启" if enabled else "队列停止"
+        self.queue_label.configure(text=queue_text, fg=ACCENT if enabled and self.manager.settings["queue_enabled"] else MUTED)
+        self.actions["队列"].configure(text=("停止队列" if enabled else "启动队列") if self.active_queue else ("全部停止" if enabled else "全部启动"))
+        self.master_button.configure(text="全部停止" if self.manager.settings["queue_enabled"] else "全部启动")
         stop_at = self.manager.settings.get("stop_at")
         suffix = "    ·    " + datetime.fromtimestamp(float(stop_at)).strftime("%m-%d %H:%M 定时停止") if stop_at else ""
         self.footer.configure(text="任务保存失败：" + self.manager.last_save_error if self.manager.last_save_error else
@@ -528,7 +561,7 @@ class App:
         AddDialog(self)
 
     def import_links(self):
-        path = filedialog.askopenfilename(parent=self.root, title="导入链接列表（每行一个 HTTP/HTTPS 地址）",
+        path = filedialog.askopenfilename(parent=self.root, title="导入链接列表（每行一个 HTTP/HTTPS/FTP 地址）",
             filetypes=[("链接列表", "*.txt"), ("所有文件", "*.*")])
         if not path:
             return
@@ -543,7 +576,7 @@ class App:
             for url in urls:
                 try:
                     # Import paused so the user can review before transferring.
-                    self.manager.add(url, start=False)
+                    self.manager.add(url, start=False, queue_id=self.active_queue or "default")
                     accepted += 1
                 except ValueError:
                     failed += 1
@@ -568,7 +601,7 @@ class App:
             text = self.root.clipboard_get().strip()
         except tk.TclError:
             return
-        if text.startswith(("http://", "https://")):
+        if text.startswith(("http://", "https://", "ftp://")):
             AddDialog(self, text)
             return "break"
 
@@ -583,9 +616,21 @@ class App:
         self.refresh_selection()
 
     def queue(self):
-        enabled = not self.manager.settings["queue_enabled"]
-        self.manager.set_queue(enabled)
+        scope = self.manager.queues[self.active_queue] if self.active_queue else self.manager.settings
+        enabled = not scope["enabled" if self.active_queue else "queue_enabled"]
+        self.manager.set_queue(enabled, self.active_queue)
         self.refresh_selection()
+
+    def master_queue(self):
+        self.manager.set_queue(not self.manager.settings["queue_enabled"])
+        self.refresh_selection()
+
+    def ftp_login(self):
+        tasks = self.selected()
+        if len(tasks) == 1 and tasks[0]["url"].startswith("ftp:"):
+            FTPLoginDialog(self, tasks[0])
+        else:
+            messagebox.showinfo("FTP 登录", "请选择一个已停止的 FTP 任务", parent=self.root)
 
     def folder(self):
         tasks = self.selected()
@@ -657,6 +702,7 @@ class App:
         menu = tk.Menu(self.root, tearoff=False)
         for title, command in [("继续 / 重试", self.resume), ("暂停", self.pause), ("打开保存目录", self.folder),
                 ("任务属性", self.details_popup), ("编辑 / 更新下载地址", self.edit),
+                ("FTP 登录…", self.ftp_login), ("移动到队列…", lambda: QueueDialog(self)),
                 ("上移队列", lambda: self.move(-1)), ("下移队列", lambda: self.move(1)),
                 ("复制下载地址", self.copy_url), ("移除任务（保留文件）", self.remove)]:
             menu.add_command(label=title, command=command)
@@ -679,7 +725,7 @@ class App:
             messagebox.showinfo("请稍候", str(exc), parent=self.root)
 
     def about(self):
-        messagebox.showinfo("FlowGet", f"FlowGet {VERSION}\n\n独立实现的 Windows 下载管理器。\n已实现：分段、续传、队列排序、定时启停、全局及单任务限速、\n链接更新、校验、批量链接、速度曲线和实时连接详情。\n已提供：浏览器主动发送链接扩展，需单独安装和联调。\n\n后续：自动接管、请求上下文、站点抓取、流媒体。\n本程序与 Tonec / IDM 无隶属关系。", parent=self.root)
+        messagebox.showinfo("FlowGet", f"FlowGet {VERSION}\n\n独立实现的 Windows 下载管理器。\n支持 HTTP / HTTPS / FTP、多队列及独立计划、站点资源抓取、\n分段续传、限速、校验、速度曲线及实时连接详情。\nFTP 为单连接，登录密码仅在本次运行保留。\n站点抓取不执行 JavaScript，不改写离线网页链接。\n\n后续：浏览器自动接管、登录请求上下文、流媒体。\n本程序与 Tonec / IDM 无隶属关系。", parent=self.root)
 
     def close(self):
         self.closing = True

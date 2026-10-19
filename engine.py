@@ -9,6 +9,7 @@ import concurrent.futures
 import copy
 from email.message import Message
 import hashlib
+import ftplib
 import json
 import math
 import os
@@ -23,6 +24,7 @@ import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
 from transport import CurlResponse
+from ftp_transport import FTPSource, RestRejected
 
 
 ACTIVE = {"probing", "downloading", "verifying", "pausing"}
@@ -56,13 +58,15 @@ def clean_name(name: str) -> str:
     return name[:160]
 
 
-def check_url(url: str) -> str:
+def check_url(url: str, *, allow_ftp=False) -> str:
     url = url.strip()
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
-        raise ValueError("请输入完整的 HTTP 或 HTTPS 下载地址")
+    if parsed.scheme.lower() not in (("http", "https", "ftp") if allow_ftp else ("http", "https")) or not parsed.hostname:
+        raise ValueError("请输入完整的 " + ("HTTP、HTTPS 或 FTP" if allow_ftp else "HTTP 或 HTTPS") + " 下载地址")
     if parsed.username or parsed.password or any(ord(c) < 32 for c in url):
         raise ValueError("不支持在地址中嵌入用户名、密码或控制字符")
+    if parsed.scheme.lower() == "ftp" and (parsed.query or any(c in urllib.parse.unquote(parsed.path) for c in "\r\n\x00")):
+        raise ValueError("FTP 地址不支持查询参数或控制字符")
     # Support Unicode paths while preserving an already escaped signed URL.
     host = parsed.hostname.encode("idna").decode("ascii")
     if ":" in host:
@@ -106,6 +110,8 @@ class Task:
     segments: list = field(default_factory=list)
     automatic_name: bool = False
     limit_kib: int = 0
+    queue_id: str = "default"
+    ftp_user: str = "anonymous"
 
 
 class Manager:
@@ -130,16 +136,23 @@ class Manager:
         self._limit_lock = threading.Lock()
         self._limit_next = time.monotonic()
         self._task_limit_next = {}
+        self.ftp_passwords = {}
+        self.queues = {"default": {"id": "default", "name": "默认队列", "enabled": True,
+            "parallel": 8, "schedule_at": "", "stop_at": ""}}
+        self._dispatch_cursor = 0
         if self.state_file.exists():
             try:
                 state = json.loads(self.state_file.read_text(encoding="utf-8"))
                 self.settings.update(state.get("settings", {}))
+                self.queues.update({q["id"]: q for q in state.get("queues", [])})
                 fields = Task.__dataclass_fields__
                 for item in state.get("tasks", []):
                     task = Task(**{k: v for k, v in item.items() if k in fields})
                     if task.status in ACTIVE:
                         task.status = "paused"
                     task.speed = 0
+                    if task.queue_id not in self.queues:
+                        task.queue_id = "default"
                     self.tasks[task.id] = task
             except (ValueError, TypeError, OSError) as exc:
                 raise RuntimeError(f"任务文件读取失败；原文件已保留：{self.state_file}\n{exc}") from exc
@@ -150,7 +163,7 @@ class Manager:
     def save(self):
         with self.save_lock:
             with self.lock:
-                value = {"version": 1, "settings": copy.deepcopy(self.settings),
+                value = {"version": 2, "settings": copy.deepcopy(self.settings), "queues": copy.deepcopy(list(self.queues.values())),
                     "tasks": [asdict(t) for t in self.tasks.values()]}
             atomic_json(self.state_file, value)
 
@@ -158,13 +171,39 @@ class Manager:
         with self.lock:
             return [asdict(t) for t in self.tasks.values()]
 
+    def add_batch(self, urls, *, queue_id="default", folder=None):
+        """Import discovered URLs paused, deduplicated in the destination queue."""
+        if len(urls) > 1000:
+            raise ValueError("一次最多添加 1000 个链接")
+        urls = list(dict.fromkeys(check_url(url, allow_ftp=True) for url in urls))
+        directory = str(Path(folder or self.settings["folder"]).resolve())
+        added = []
+        with self.lock:
+            if queue_id not in self.queues:
+                raise ValueError("下载队列不存在")
+            existing = {t.url for t in self.tasks.values() if t.queue_id == queue_id}
+            for url in urls:
+                if url in existing:
+                    continue
+                name = clean_name(urllib.parse.unquote(urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]))
+                task = Task(uuid.uuid4().hex, url, directory, name, connections=self.settings["connections"],
+                    status="paused", automatic_name=True, queue_id=queue_id)
+                self.tasks[task.id] = task
+                added.append(task.id)
+        self.save()
+        return added
+
     def configure(self, **values):
         with self.lock:
             self.settings.update(values)
+            if values.get("queue_enabled") is False:
+                self._set_queue_locked(False, clear_schedule=False)
         self.save()
 
-    def add(self, url, folder=None, name="", connections=None, expected_sha256="", start=True, request_id=None, limit_kib=0):
-        url = check_url(url)
+    def add(self, url, folder=None, name="", connections=None, expected_sha256="", start=True, request_id=None, limit_kib=0,
+            queue_id="default", ftp_user="anonymous", ftp_password=""):
+        url = check_url(url, allow_ftp=True)
+        self._check_ftp_login(ftp_user, ftp_password)
         expected_sha256 = expected_sha256.strip().lower()
         if expected_sha256 and not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
             raise ValueError("SHA-256 应为 64 位十六进制字符")
@@ -179,11 +218,15 @@ class Manager:
         task = Task(request_id or uuid.uuid4().hex, url, folder, name,
             max(1, min(32, int(connections or self.settings["connections"]))),
             status="queued" if start else "paused", expected_sha256=expected_sha256,
-            automatic_name=automatic_name, limit_kib=limit_kib)
+            automatic_name=automatic_name, limit_kib=limit_kib, queue_id=queue_id, ftp_user=ftp_user or "anonymous")
         with self.lock:
+            if queue_id not in self.queues:
+                raise ValueError("下载队列不存在")
             if task.id in self.tasks:
                 return task.id
             self.tasks[task.id] = task
+            if urllib.parse.urlsplit(url).scheme == "ftp":
+                self.ftp_passwords[task.id] = ftp_password
         self.save()
         return task.id
 
@@ -198,6 +241,8 @@ class Manager:
     def pause(self, task_id):
         with self.lock:
             t = self.tasks[task_id]
+            if t.status == "complete":
+                return
             if task_id in self.running:
                 self.running[task_id][1].set()
                 t.status = "pausing"
@@ -212,6 +257,7 @@ class Manager:
             # Keep destination and partial payloads; never delete user files.
             self.tasks.pop(task_id, None)
             self._task_limit_next.pop(task_id, None)
+            self.ftp_passwords.pop(task_id, None)
         self.save()
 
     def update_task(self, task_id, *, url, name, connections, limit_kib=0):
@@ -220,7 +266,7 @@ class Manager:
         URL identity is part of the existing recovery contract; never splice old
         payload into a replacement link without an independently proven identity.
         """
-        url = check_url(url)
+        url = check_url(url, allow_ftp=True)
         connections, limit_kib = int(connections), int(limit_kib)
         if not 1 <= connections <= 32 or not 0 <= limit_kib <= 1048576:
             raise ValueError("连接数应为 1–32，限速应为 0–1048576 KB/s")
@@ -230,6 +276,7 @@ class Manager:
                 raise ValueError("仅可编辑已停止的未完成任务，请先暂停并等待连接停止")
             if url != t.url:
                 t.done, t.total, t.segments, t.resumable = 0, None, [], False
+                self.ftp_passwords.pop(task_id, None)
             t.url, t.name = url, clean_name(name or t.name)
             t.connections, t.limit_kib = connections, limit_kib
             t.automatic_name = False
@@ -237,30 +284,111 @@ class Manager:
             self._task_limit_next.pop(task_id, None)
         self.save()
 
-    def move(self, task_ids, direction):
+    @staticmethod
+    def _check_ftp_login(username, password):
+        if any(ord(c) < 32 for c in username + password):
+            raise ValueError("FTP 登录信息不能包含控制字符")
+
+    def set_ftp_login(self, task_id, username, password):
+        self._check_ftp_login(username, password)
+        with self.lock:
+            task = self.tasks[task_id]
+            if task_id in self.running or urllib.parse.urlsplit(task.url).scheme != "ftp":
+                raise ValueError("请先停止 FTP 任务")
+            task.ftp_user = username or "anonymous"
+            self.ftp_passwords[task_id] = password
+        self.save()
+
+    def queue_snapshots(self):
+        with self.lock:
+            return copy.deepcopy(list(self.queues.values()))
+
+    def create_queue(self, name, parallel=2):
+        name = name.strip()
+        parallel = int(parallel)
+        if not name or name == "全部队列" or len(name) > 60 or not 1 <= parallel <= 8:
+            raise ValueError("队列名称应为 1–60 字符，并发数应为 1–8")
+        with self.lock:
+            if any(q["name"] == name for q in self.queues.values()):
+                raise ValueError("已有同名队列")
+            queue_id = uuid.uuid4().hex
+            self.queues[queue_id] = {"id": queue_id, "name": name, "parallel": parallel,
+                "enabled": True, "schedule_at": "", "stop_at": ""}
+        self.save()
+        return queue_id
+
+    def configure_queue(self, queue_id, *, name, parallel, schedule_at="", stop_at=""):
+        name, parallel = name.strip(), int(parallel)
+        start = float(schedule_at) if schedule_at else ""
+        end = float(stop_at) if stop_at else ""
+        if not name or name == "全部队列" or len(name) > 60 or not 1 <= parallel <= 8:
+            raise ValueError("队列名称应为 1–60 字符，并发数应为 1–8")
+        if any(value and (not math.isfinite(value) or value <= time.time()) for value in (start, end)):
+            raise ValueError("请选择未来的计划时间")
+        if start and end and end <= start:
+            raise ValueError("停止时间应晚于启动时间")
+        with self.lock:
+            if any(q["name"] == name and q["id"] != queue_id for q in self.queues.values()):
+                raise ValueError("已有同名队列")
+            q = self.queues[queue_id]
+            q.update(name=name, parallel=parallel, schedule_at=start, stop_at=end)
+            if start:
+                self._set_queue_locked(False, queue_id, clear_schedule=False)
+        self.save()
+
+    def delete_queue(self, queue_id):
+        with self.lock:
+            if queue_id == "default":
+                raise ValueError("默认队列不能删除")
+            if any(t.queue_id == queue_id for t in self.tasks.values()):
+                raise ValueError("请先将队列中的任务移至其他队列")
+            self.queues.pop(queue_id)
+        self.save()
+
+    def assign_queue(self, task_ids, queue_id):
+        with self.lock:
+            if queue_id not in self.queues:
+                raise ValueError("下载队列不存在")
+            tasks = [self.tasks[key] for key in task_ids]
+            if any(t.id in self.running or t.status in ACTIVE for t in tasks):
+                raise ValueError("请先暂停并等待任务停止，再移动到其他队列")
+            for task in tasks:
+                task.queue_id = queue_id
+        self.save()
+
+    def move(self, task_ids, direction, queue_id=None):
         """Move the selected block one position, preserving relative order."""
         if direction not in (-1, 1):
             raise ValueError("队列方向无效")
         selected = set(task_ids)
         with self.lock:
-            order = list(self.tasks)
+            positions = [key for key, task in self.tasks.items() if queue_id is None or task.queue_id == queue_id]
+            order = positions[:]
             indices = range(1, len(order)) if direction == -1 else range(len(order)-2, -1, -1)
             for i in indices:
                 j = i + direction
                 if order[i] in selected and order[j] not in selected:
                     order[i], order[j] = order[j], order[i]
-            self.tasks = {key: self.tasks[key] for key in order}
+            moved = iter(order)
+            position_set = set(positions)
+            self.tasks = {key: self.tasks[key] for key in (next(moved) if key in position_set else key for key in self.tasks)}
         self.save()
 
-    def set_queue(self, enabled, *, clear_schedule=True):
-        with self.lock:
-            self.settings["queue_enabled"] = bool(enabled)
-            if clear_schedule:
-                self.settings["schedule_at"] = ""
-            if not enabled:
-                for task_id, (_, stop) in self.running.items():
+    def _set_queue_locked(self, enabled, queue_id=None, *, clear_schedule=True):
+        target = self.settings if queue_id is None else self.queues[queue_id]
+        target["queue_enabled" if queue_id is None else "enabled"] = bool(enabled)
+        if clear_schedule:
+            target["schedule_at"] = ""
+        if not enabled:
+            for task_id, (_, stop) in self.running.items():
+                task = self.tasks[task_id]
+                if task.status != "complete" and (queue_id is None or task.queue_id == queue_id):
                     stop.set()
-                    self.tasks[task_id].status = "pausing"
+                    task.status = "pausing"
+
+    def set_queue(self, enabled, queue_id=None, *, clear_schedule=True):
+        with self.lock:
+            self._set_queue_locked(enabled, queue_id, clear_schedule=clear_schedule)
         self.save()
 
     def _dispatch(self):
@@ -275,23 +403,40 @@ class Manager:
                     stop_at = self.settings.get("stop_at", "")
                     if stop_at and time.time() >= float(stop_at):
                         self.settings["stop_at"] = ""
-                        self.settings["schedule_at"] = ""
-                        self.settings["queue_enabled"] = False
-                        for task_id, (_, stop) in self.running.items():
-                            stop.set()
-                            self.tasks[task_id].status = "pausing"
+                        self._set_queue_locked(False)
+                    for q in self.queues.values():
+                        if q["schedule_at"] and time.time() >= float(q["schedule_at"]):
+                            q["schedule_at"], q["enabled"] = "", True
+                        if q["stop_at"] and time.time() >= float(q["stop_at"]):
+                            q["stop_at"] = ""
+                            self._set_queue_locked(False, q["id"])
                     slots = max(1, min(8, int(self.settings["parallel"]))) - len(self.running)
                     if self.settings["queue_enabled"]:
-                        for t in self.tasks.values():
-                            if slots <= 0:
-                                break
-                            if t.status == "queued" and t.id not in self.running:
+                        queues = list(self.queues.values())
+                        candidates = {q["id"]: [t for t in self.tasks.values() if t.queue_id == q["id"]
+                            and t.status == "queued" and t.id not in self.running] for q in queues}
+                        counts = {q["id"]: sum(self.tasks[key].queue_id == q["id"] for key in self.running) for q in queues}
+                        cursor = self._dispatch_cursor % len(queues)
+                        for _ in range(max(0, slots)):
+                            found = False
+                            for offset in range(len(queues)):
+                                index = (cursor + offset) % len(queues)
+                                q = queues[index]
+                                if not q["enabled"] or counts[q["id"]] >= q["parallel"] or not candidates[q["id"]]:
+                                    continue
+                                t = candidates[q["id"]].pop(0)
                                 stop = threading.Event()
                                 worker = threading.Thread(target=self._run, args=(t, stop), daemon=True)
                                 self.running[t.id] = (worker, stop)
                                 t.status = "probing"
                                 worker.start()
-                                slots -= 1
+                                counts[q["id"]] += 1
+                                cursor = (index + 1) % len(queues)
+                                found = True
+                                break
+                            if not found:
+                                break
+                        self._dispatch_cursor = cursor
                 self.save()
             except Exception as exc:
                 self.last_save_error = str(exc)
@@ -319,7 +464,7 @@ class Manager:
         return urllib.request.build_opener(Redirects(), *([] if self.use_proxy else [urllib.request.ProxyHandler({})]))
 
     def _open(self, url, headers=None):
-        all_headers = {"User-Agent": "FlowGet/0.2", "Accept-Encoding": "identity", **(headers or {})}
+        all_headers = {"User-Agent": "FlowGet/0.3", "Accept-Encoding": "identity", **(headers or {})}
         if self.curl:
             return CurlResponse(self.curl, url, all_headers, self.use_proxy)
         request = urllib.request.Request(url, headers=all_headers)
@@ -386,7 +531,7 @@ class Manager:
             for item in directory.glob("*.part"):
                 item.unlink()
             size = info["size"]
-            count = min(t.connections, max(1, math.ceil((size or 0) / (512 * 1024)))) if info["range"] and info["validator"] else 1
+            count = min(t.connections, max(1, math.ceil((size or 0) / (512 * 1024)))) if info["range"] and info["validator"] and not info.get("single") else 1
             ranges = []
             if size:
                 chunk = math.ceil(size / count)
@@ -544,6 +689,56 @@ class Manager:
         self.save()
         shutil.rmtree(directory, ignore_errors=True)
 
+    def _download_ftp(self, t, stop):
+        with self.lock:
+            password = self.ftp_passwords.get(t.id)
+        if password is None and t.ftp_user != "anonymous":
+            raise ValueError("FTP 登录密码未保存，请在「FTP 登录」中重新输入后继续")
+        allow_resume = True
+        for attempt in range(4):
+            if stop.is_set():
+                raise Paused()
+            try:
+                with FTPSource(t.url, t.ftp_user, password or "") as source:
+                    info = source.probe()
+                    if not allow_resume:
+                        info["range"] = False
+                    directory, ranges = self._prepare(t, info)
+                    if stop.is_set():
+                        raise Paused()
+                    with self.lock:
+                        t.status, t.error = "downloading", ""
+                    if not ranges:
+                        return directory, ranges
+                    path = directory / "0.part"
+                    have = path.stat().st_size if path.exists() else 0
+                    def consume(block):
+                        if stop.is_set():
+                            raise Paused()
+                        if t.total is not None and t.done + len(block) > t.total:
+                            raise ProtocolError("FTP 数据超出已知大小，未发布文件")
+                        self._throttle(len(block), stop, t)
+                        output.write(block)
+                        with self.lock:
+                            t.done += len(block)
+                            t.segments[0]["done"] += len(block)
+                    if t.total is None or have != t.total:
+                        with path.open("ab", buffering=0) as output:
+                            source.retrieve(have, consume)
+                    if t.total is not None and t.done != t.total:
+                        raise IOError("FTP 连接提前结束")
+                    if source.metadata() != tuple(info["ftp_metadata"]):
+                        raise ProtocolError("FTP 文件在传输期间发生变化，未发布文件；请重新下载")
+                    return directory, ranges
+            except RestRejected:
+                allow_resume = False
+            except (OSError, EOFError, ftplib.error_temp):
+                if attempt == 3:
+                    raise
+                if stop.wait(min(2 ** attempt, 4)):
+                    raise Paused()
+        raise ProtocolError("FTP 服务器无法恢复传输，请重试")
+
     def _run(self, t, stop):
         sampler_stop = threading.Event()
         def sample():
@@ -556,16 +751,19 @@ class Manager:
         sampler = threading.Thread(target=sample, daemon=True)
         sampler.start()
         try:
-            info = self._probe(t, stop)
-            if t.automatic_name and info.get("filename"):
+            if urllib.parse.urlsplit(t.url).scheme == "ftp":
+                directory, ranges = self._download_ftp(t, stop)
+            else:
+                info = self._probe(t, stop)
+                if t.automatic_name and info.get("filename"):
+                    with self.lock:
+                        t.name = info["filename"]
+                directory, ranges = self._prepare(t, info)
+                if stop.is_set():
+                    raise Paused()
                 with self.lock:
-                    t.name = info["filename"]
-            directory, ranges = self._prepare(t, info)
-            if stop.is_set():
-                raise Paused()
-            with self.lock:
-                t.status, t.error = "downloading", ""
-            if ranges:
+                    t.status, t.error = "downloading", ""
+            if urllib.parse.urlsplit(t.url).scheme != "ftp" and ranges:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=len(ranges)) as pool:
                     futures = [pool.submit(self._segment, t, stop, info, directory, i, bounds) for i, bounds in enumerate(ranges)]
                     first_error = None
@@ -586,7 +784,11 @@ class Manager:
                 t.status = "paused"
         except Exception as exc:
             with self.lock:
-                t.status, t.error = "error", str(exc)
+                message = str(exc)
+                password = self.ftp_passwords.get(t.id)
+                if password:
+                    message = message.replace(password, "***")
+                t.status, t.error = "error", message
         finally:
             sampler_stop.set()
             with self.lock:

@@ -1,5 +1,12 @@
 FlowGet 验证索引，2026-10-19
 
+0.3.0 源码验证
+  v0.3-tests.txt：Linux / Python 标准库 / Tk 8.6 测试记录。
+  本地真实 FTP 控制/数据连接、HTTP 测试站、多队列和桌面集成均可复跑。
+  ui-0.3.png、ui-0.3-queues.png、ui-0.3-grabber.png：真实 Tk 窗口截图。
+  截图任务为演示数据，抓取窗口使用本地测试网站，不表示下载了互联网资源。
+  旧 Windows EXE 未重建；本轮未验证 Windows curl、真实浏览器或互联网 FTP。
+
 0.2.0 源码验证
   v0.2-tests.txt：本轮 Linux / Python urllib / Tk 8.6 回归记录。
   ui-0.2.png：真实 Tk 窗口截图，列表内容为临时目录中的演示样本。

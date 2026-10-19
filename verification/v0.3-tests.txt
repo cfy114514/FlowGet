@@ -1,0 +1,94 @@
+FlowGet 0.3.0 source verification
+Platform: Linux x86_64
+Python: 3.13.5 / Tk 8.6
+HTTP backend: urllib; controlled local origin
+FTP: real control/data sockets against independent local FTP fixture
+Crawler: controlled local website, robots/scope/budgets/import
+Desktop: real Tk widgets under Xorg
+Windows curl, packaged EXE, real browser and Internet FTP: not tested in this run
+
+Command: /usr/bin/python3 -m unittest discover -s tests -p test_*.py -v
+test_bad_frames (test_bridge.BridgeChecks.test_bad_frames) ... ok
+test_caller_fields_cannot_set_destination (test_bridge.BridgeChecks.test_caller_fields_cannot_set_destination) ... ok
+test_import_once_and_replay_deduplication (test_bridge.BridgeChecks.test_import_once_and_replay_deduplication) ... ok
+test_invalid_inbox_is_quarantined (test_bridge.BridgeChecks.test_invalid_inbox_is_quarantined) ... ok
+test_non_http_and_embedded_credentials_denied (test_bridge.BridgeChecks.test_non_http_and_embedded_credentials_denied) ... ok
+test_unicode_byte_framing (test_bridge.BridgeChecks.test_unicode_byte_framing) ... ok
+test_unknown_extension_denied (test_bridge.BridgeChecks.test_unknown_extension_denied) ... ok
+test_bad_digest_never_published (test_engine.EngineChecks.test_bad_digest_never_published) ... ok
+test_bad_range_never_published (test_engine.EngineChecks.test_bad_range_never_published) ... ok
+test_changed_representation_discards_old_parts (test_engine.EngineChecks.test_changed_representation_discards_old_parts) ... ok
+test_collision_preserves_existing (test_engine.EngineChecks.test_collision_preserves_existing) ... ok
+test_disconnect_retry (test_engine.EngineChecks.test_disconnect_retry) ... ok
+test_empty (test_engine.EngineChecks.test_empty) ... ok
+test_filename_url_safety (test_engine.EngineChecks.test_filename_url_safety) ... ok
+test_ignore_ranges (test_engine.EngineChecks.test_ignore_ranges) ... ok
+test_link_refresh_does_not_reuse_old_payload (test_engine.EngineChecks.test_link_refresh_does_not_reuse_old_payload) ... ok
+test_metadata_edit_preserves_resume_and_checks_active (test_engine.EngineChecks.test_metadata_edit_preserves_resume_and_checks_active) ... ok
+test_missing (test_engine.EngineChecks.test_missing) ... ok
+test_no_validator (test_engine.EngineChecks.test_no_validator) ... ok
+test_parallel_hash (test_engine.EngineChecks.test_parallel_hash) ... ok
+test_pause_resume_across_manager_restart (test_engine.EngineChecks.test_pause_resume_across_manager_restart) ... ok
+test_per_task_limit_is_shared_by_segments (test_engine.EngineChecks.test_per_task_limit_is_shared_by_segments) ... ok
+test_queue_order_survives_restart (test_engine.EngineChecks.test_queue_order_survives_restart) ... ok
+test_queue_parallel_cap (test_engine.EngineChecks.test_queue_parallel_cap) ... ok
+test_redirect (test_engine.EngineChecks.test_redirect) ... ok
+test_scheduled_queue (test_engine.EngineChecks.test_scheduled_queue) ... ok
+test_scheduled_stop_pauses_active_and_keeps_waiting (test_engine.EngineChecks.test_scheduled_stop_pauses_active_and_keeps_waiting) ... ok
+test_server_filename_and_explicit_name (test_engine.EngineChecks.test_server_filename_and_explicit_name) ... ok
+test_speed_limit (test_engine.EngineChecks.test_speed_limit) ... ok
+test_task_limit_does_not_block_other_tasks (test_engine.EngineChecks.test_task_limit_does_not_block_other_tasks) ... ok
+test_unknown_length (test_engine.EngineChecks.test_unknown_length) ... ok
+test_anonymous_single_connection_and_hash (test_ftp.FTPChecks.test_anonymous_single_connection_and_hash) ... ok
+test_bad_hash_and_invalid_ftp_commands (test_ftp.FTPChecks.test_bad_hash_and_invalid_ftp_commands) ... ok
+test_changed_remote_file_discards_old_bytes (test_ftp.FTPChecks.test_changed_remote_file_discards_old_bytes) ... ok
+test_missing_metadata_restarts (test_ftp.FTPChecks.test_missing_metadata_restarts) ... ok
+test_mutation_during_transfer_is_not_published (test_ftp.FTPChecks.test_mutation_during_transfer_is_not_published) ... ok
+test_password_not_persisted_and_relogin_after_restart (test_ftp.FTPChecks.test_password_not_persisted_and_relogin_after_restart) ... ok
+test_rejected_rest_falls_back_to_full_transfer (test_ftp.FTPChecks.test_rejected_rest_falls_back_to_full_transfer) ... ok
+test_rest_resume_after_restart (test_ftp.FTPChecks.test_rest_resume_after_restart) ... ok
+test_unknown_size_empty_and_missing (test_ftp.FTPChecks.test_unknown_size_empty_and_missing) ... ok
+test_cancellation_and_large_page_budget (test_grabber.GrabberChecks.test_cancellation_and_large_page_budget) ... ok
+test_deeper_discovery_and_full_site_scope (test_grabber.GrabberChecks.test_deeper_discovery_and_full_site_scope) ... ok
+test_depth_zero_and_page_budget (test_grabber.GrabberChecks.test_depth_zero_and_page_budget) ... ok
+test_discovered_resources_download_into_selected_queue (test_grabber.GrabberChecks.test_discovered_resources_download_into_selected_queue) ... ok
+test_filters_dedup_depth_scope_and_redirects (test_grabber.GrabberChecks.test_filters_dedup_depth_scope_and_redirects) ... ok
+test_robots_failure_and_access_denial (test_grabber.GrabberChecks.test_robots_failure_and_access_denial) ... ok
+test_scope_rejects_encoded_traversal_and_ports (test_grabber.GrabberChecks.test_scope_rejects_encoded_traversal_and_ports) ... ok
+test_assignment_is_atomic_and_deletion_preserves_tasks (test_queues.QueueChecks.test_assignment_is_atomic_and_deletion_preserves_tasks) ... ok
+test_batch_import_is_paused_validated_and_deduplicated (test_queues.QueueChecks.test_batch_import_is_paused_validated_and_deduplicated) ... ok
+test_independent_pause_and_concurrency_caps (test_queues.QueueChecks.test_independent_pause_and_concurrency_caps) ... ok
+test_invalid_queue_configuration_does_not_mutate (test_queues.QueueChecks.test_invalid_queue_configuration_does_not_mutate) ... ok
+test_migration_from_version_one (test_queues.QueueChecks.test_migration_from_version_one) ... ok
+test_move_in_queue_leaves_other_queue_positions_unchanged (test_queues.QueueChecks.test_move_in_queue_leaves_other_queue_positions_unchanged) ... ok
+test_queue_schedule_stops_only_its_own_tasks (test_queues.QueueChecks.test_queue_schedule_stops_only_its_own_tasks) ... ok
+test_round_robin_avoids_queue_starvation (test_queues.QueueChecks.test_round_robin_avoids_queue_starvation) ... ok
+test_stop_during_worker_cleanup_keeps_completed_file_state (test_queues.QueueChecks.test_stop_during_worker_cleanup_keeps_completed_file_state) ... ok
+test_closed_dialog_releases_tcl_variables_before_worker_gc (test_ui.DesktopChecks.test_closed_dialog_releases_tcl_variables_before_worker_gc) ... ok
+test_dialog_controls_fit_at_minimum_window_size (test_ui.DesktopChecks.test_dialog_controls_fit_at_minimum_window_size) ... ok
+test_edit_and_live_details_with_selection_removed (test_ui.DesktopChecks.test_edit_and_live_details_with_selection_removed) ... ok
+test_filtered_add_reveals_new_task (test_ui.DesktopChecks.test_filtered_add_reveals_new_task) ... ok
+test_queue_assignment_filter_and_independent_toggle (test_ui.DesktopChecks.test_queue_assignment_filter_and_independent_toggle) ... ok
+test_site_discovery_preview_import_and_cancellation (test_ui.DesktopChecks.test_site_discovery_preview_import_and_cancellation) ... ok
+test_sort_is_view_only_and_move_updates_real_queue (test_ui.DesktopChecks.test_sort_is_view_only_and_move_updates_real_queue) ... ok
+
+----------------------------------------------------------------------
+Ran 63 tests in 74.069s
+
+OK
+Exit: 0
+
+Command: node --test tests/extension.test.js
+✔ context menu hands off only an explicit HTTP link (3.695244ms)
+✔ non HTTP and embedded credentials never reach native messaging (3.319782ms)
+✔ foreign extension messages do not trigger a download (0.95368ms)
+✔ popup reports native rejection (1.311334ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 123.464118
+Exit: 0
